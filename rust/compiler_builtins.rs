@@ -81,6 +81,7 @@ define_panicking_intrinsics!("`f32` should not be used", {
     __subsf3,
     __subsf3vfp,
     __unordsf2,
+    __aeabi_ul2f,
 });
 
 define_panicking_intrinsics!("`f64` should not be used", {
@@ -118,6 +119,7 @@ define_panicking_intrinsics!("`f64` should not be used", {
     __subdf3,
     __subdf3vfp,
     __unorddf2,
+    __aeabi_ul2d,
 });
 
 define_panicking_intrinsics!("`i128` should not be used", {
@@ -132,6 +134,12 @@ define_panicking_intrinsics!("`u128` should not be used", {
     __udivmodti4,
     __udivti3,
     __umodti3,
+});
+
+#[cfg(target_arch = "arm")]
+define_panicking_intrinsics!("`u64` division/modulo should not be used", {
+    __aeabi_uldivmod,
+    __mulodi4,
 });
 
 extern "C" {
