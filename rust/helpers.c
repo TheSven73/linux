@@ -80,7 +80,3 @@ void rust_helper_kunmap(struct page *page)
 	return kunmap(page);
 }
 EXPORT_SYMBOL(rust_helper_kunmap);
-
-// See https://github.com/rust-lang/rust-bindgen/issues/1671
-static_assert(__builtin_types_compatible_p(size_t, uintptr_t),
-	"size_t must match uintptr_t, what architecture is this??");
