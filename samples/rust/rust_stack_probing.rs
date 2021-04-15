@@ -24,12 +24,16 @@ impl KernelModule for RustStackProbing {
     fn init() -> KernelResult<Self> {
         pr_info!("Rust stack probing sample (init)\n");
 
-        // Including this large variable on the stack will trigger
-        // stack probing on the supported archs.
-        // This will verify that stack probing does not lead to
-        // any errors if we need to link `__rust_probestack`.
-        let x: [u64; 514] = core::hint::black_box([5; 514]);
-        pr_info!("Large array has length: {}\n", x.len());
+        if cfg!(all(target_arch = "arm", CONFIG_DEBUG_KERNEL)) {
+            pr_warn!("Skip Rust stack probing on arm 32-bit debug builds\n");
+        } else {
+            // Including this large variable on the stack will trigger
+            // stack probing on the supported archs.
+            // This will verify that stack probing does not lead to
+            // any errors if we need to link `__rust_probestack`.
+            let x: [u64; 514] = core::hint::black_box([5; 514]);
+            pr_info!("Large array has length: {}\n", x.len());
+        }
 
         Ok(RustStackProbing)
     }
