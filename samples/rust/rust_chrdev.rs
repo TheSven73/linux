@@ -39,7 +39,7 @@ impl FileOperations for RustFile {
 }
 
 struct RustChrdev {
-    _dev: Pin<Box<chrdev::Registration<2>>>,
+    _dev: Pin<Box<chrdev::Registration<1>>>,
 }
 
 impl KernelModule for RustChrdev {
@@ -53,7 +53,7 @@ impl KernelModule for RustChrdev {
         // that you can use multiple minors. There are two minors in this case
         // because its type is `chrdev::Registration<2>`
         chrdev_reg.as_mut().register::<RustFile>()?;
-        chrdev_reg.as_mut().register::<RustFile>()?;
+        //chrdev_reg.as_mut().register::<RustFile>()?;
 
         Ok(RustChrdev { _dev: chrdev_reg })
     }
