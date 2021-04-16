@@ -304,6 +304,10 @@ jobs:
           grep '] rust_semaphore_c: Rust semaphore sample (in C, for comparison) (init)$' qemu-stdout.log
           grep '] rust_semaphore_c: Rust semaphore sample (in C, for comparison) (exit)$' qemu-stdout.log
 
+      - run: |
+          grep -v '] BUG:' qemu-stdout.log
+          grep -v '] WARNING:' qemu-stdout.log
+
       # Report
       - run: |
           ls -l \
