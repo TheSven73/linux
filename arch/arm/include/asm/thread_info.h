@@ -18,7 +18,7 @@
  * KASan uses a lot of extra stack space so the thread size order needs to
  * be increased.
  */
-#define THREAD_SIZE_ORDER	2
+#define THREAD_SIZE_ORDER	3
 #else
 #define THREAD_SIZE_ORDER	1
 #endif
