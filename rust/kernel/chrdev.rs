@@ -20,10 +20,66 @@ use crate::error::{Error, KernelResult};
 use crate::file_operations;
 use crate::types::CStr;
 
+struct SafeCdev(*mut bindings::cdev);
+
+impl SafeCdev {
+    fn alloc() -> KernelResult<Self> {
+        // SAFETY: call an unsafe function
+        let cdev = unsafe { bindings::cdev_alloc() };
+        if cdev.is_null() {
+            return Err(Error::ENOMEM);
+        }
+        Ok(Self(cdev))
+    }
+
+    fn init(&mut self, fops: *const bindings::file_operations) {
+        // SAFETY: call an unsafe function
+        unsafe {
+            bindings::cdev_init(self.0, fops);
+        }
+    }
+
+    fn add(&mut self, dev: bindings::dev_t, pos: c_types::c_uint) -> KernelResult<()> {
+        // SAFETY: call an unsafe function
+        let rc = unsafe { bindings::cdev_add(self.0, dev, pos) };
+        if rc != 0 {
+            return Err(Error::from_kernel_errno(rc));
+        }
+        Ok(())
+    }
+
+    fn set_owner(&mut self, module: &crate::ThisModule) {
+        // SAFETY: dereference of a raw pointer
+        unsafe {
+            (*self.0).owner = module.0;
+        }
+    }
+}
+
+fn new_none_array<T, const N: usize>() -> [Option<T>; N] {
+    // SAFETY: manipulate MaybeUninit memory
+    unsafe {
+        let mut arr: [MaybeUninit<Option<T>>; N] = MaybeUninit::uninit_array();
+        for elem in &mut arr {
+            elem.as_mut_ptr().write(None);
+        }
+        MaybeUninit::array_assume_init(arr)
+    }
+}
+
+impl Drop for SafeCdev {
+    fn drop(&mut self) {
+        // SAFETY: call an unsafe function
+        unsafe {
+            bindings::cdev_del(self.0);
+        }
+    }
+}
+
 struct RegistrationInner<const N: usize> {
     dev: bindings::dev_t,
     used: usize,
-    cdevs: [MaybeUninit<bindings::cdev>; N],
+    cdevs: [Option<SafeCdev>; N],
     _pin: PhantomPinned,
 }
 
@@ -99,7 +155,7 @@ impl<const N: usize> Registration<{ N }> {
             this.inner = Some(RegistrationInner {
                 dev,
                 used: 0,
-                cdevs: [MaybeUninit::<bindings::cdev>::uninit(); N],
+                cdevs: new_none_array(),
                 _pin: PhantomPinned,
             });
         }
@@ -108,22 +164,15 @@ impl<const N: usize> Registration<{ N }> {
         if inner.used == N {
             return Err(Error::EINVAL);
         }
-        let cdev = inner.cdevs[inner.used].as_mut_ptr();
-        // SAFETY: Calling unsafe functions and manipulating `MaybeUninit`
-        // pointer.
-        unsafe {
-            bindings::cdev_init(
-                cdev,
-                // SAFETY: The adapter doesn't retrieve any state yet, so it's compatible with any
-                // registration.
-                file_operations::FileOperationsVtable::<Self, T>::build(),
-            );
-            (*cdev).owner = this.this_module.0;
-            let rc = bindings::cdev_add(cdev, inner.dev + inner.used as bindings::dev_t, 1);
-            if rc != 0 {
-                return Err(Error::from_kernel_errno(rc));
-            }
-        }
+
+        let mut cdev = SafeCdev::alloc()?;
+        // SAFETY: The adapter doesn't retrieve any state yet, so it's compatible with any
+        // registration.
+        let fops = unsafe { file_operations::FileOperationsVtable::<Self, T>::build() };
+        cdev.init(fops);
+        cdev.set_owner(&this.this_module);
+        cdev.add(inner.dev + inner.used as bindings::dev_t, 1)?;
+        inner.cdevs[inner.used].replace(cdev);
         inner.used += 1;
         Ok(())
     }
@@ -149,12 +198,11 @@ unsafe impl<const N: usize> Sync for Registration<{ N }> {}
 impl<const N: usize> Drop for Registration<{ N }> {
     fn drop(&mut self) {
         if let Some(inner) = self.inner.as_mut() {
-            // SAFETY: Calling unsafe functions, `0..inner.used` of
-            // `inner.cdevs` are initialized in `Registration::register`.
+            for i in 0..inner.used {
+                inner.cdevs[i].take();
+            }
+            // SAFETY: Calling unsafe function
             unsafe {
-                for i in 0..inner.used {
-                    bindings::cdev_del(inner.cdevs[i].as_mut_ptr());
-                }
                 bindings::unregister_chrdev_region(inner.dev, N.try_into().unwrap());
             }
         }

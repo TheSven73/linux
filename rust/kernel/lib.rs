@@ -18,6 +18,8 @@
     const_fn,
     const_mut_refs,
     const_panic,
+    maybe_uninit_array_assume_init,
+    maybe_uninit_uninit_array,
     try_reserve
 )]
 #![deny(clippy::complexity)]
