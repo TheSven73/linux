@@ -23,7 +23,7 @@ use crate::types::CStr;
 struct RegistrationInner<const N: usize> {
     dev: bindings::dev_t,
     used: usize,
-    cdevs: [MaybeUninit<bindings::cdev>; N],
+    cdevs: [MaybeUninit<*mut bindings::cdev>; N],
     _pin: PhantomPinned,
 }
 
@@ -99,7 +99,7 @@ impl<const N: usize> Registration<{ N }> {
             this.inner = Some(RegistrationInner {
                 dev,
                 used: 0,
-                cdevs: [MaybeUninit::<bindings::cdev>::uninit(); N],
+                cdevs: [MaybeUninit::uninit(); N],
                 _pin: PhantomPinned,
             });
         }
@@ -108,10 +108,14 @@ impl<const N: usize> Registration<{ N }> {
         if inner.used == N {
             return Err(Error::EINVAL);
         }
-        let cdev = inner.cdevs[inner.used].as_mut_ptr();
+
         // SAFETY: Calling unsafe functions and manipulating `MaybeUninit`
         // pointer.
         unsafe {
+            let cdev = bindings::cdev_alloc();
+            if cdev.is_null() {
+                return Err(Error::ENOMEM);
+            }
             bindings::cdev_init(
                 cdev,
                 // SAFETY: The adapter doesn't retrieve any state yet, so it's compatible with any
@@ -121,8 +125,10 @@ impl<const N: usize> Registration<{ N }> {
             (*cdev).owner = this.this_module.0;
             let rc = bindings::cdev_add(cdev, inner.dev + inner.used as bindings::dev_t, 1);
             if rc != 0 {
+                bindings::cdev_del(cdev);
                 return Err(Error::from_kernel_errno(rc));
             }
+            core::ptr::write(inner.cdevs[inner.used].as_mut_ptr(), cdev);
         }
         inner.used += 1;
         Ok(())
@@ -153,7 +159,7 @@ impl<const N: usize> Drop for Registration<{ N }> {
             // `inner.cdevs` are initialized in `Registration::register`.
             unsafe {
                 for i in 0..inner.used {
-                    bindings::cdev_del(inner.cdevs[i].as_mut_ptr());
+                    bindings::cdev_del(*inner.cdevs[i].as_mut_ptr());
                 }
                 bindings::unregister_chrdev_region(inner.dev, N.try_into().unwrap());
             }
