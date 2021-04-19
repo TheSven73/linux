@@ -223,6 +223,10 @@ jobs:
             | sed s:$'\r'$:: \
             | tee qemu-stdout.log
 
+      # the kernel should not be generating any warnings
+      - run: |
+          grep -L '] WARNING:' qemu-stdout.log
+
       # Check
       - run: |
           grep '] rust_minimal: Rust minimal sample (init)$' qemu-stdout.log
