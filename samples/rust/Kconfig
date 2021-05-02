@@ -70,6 +70,17 @@ config SAMPLE_RUST_MISCDEV
 
 	  If unsure, say N.
 
+config SAMPLE_RUST_PLATDEV
+	tristate "Platform device"
+	depends on REGMAP_MMIO
+	help
+	  This option builds the Rust platform device sample.
+
+	  To compile this as a module, choose M here:
+	  the module will be called rust_platdev.
+
+	  If unsure, say N.
+
 config SAMPLE_RUST_STACK_PROBING
 	tristate "Stack probing"
 	help
