@@ -13,6 +13,9 @@
 #include <linux/poll.h>
 #include <linux/mm.h>
 #include <uapi/linux/android/binder.h>
+#include <linux/platform_device.h>
+#include <linux/regmap.h>
+#include <linux/of_platform.h>
 
 // `bindgen` gets confused at certain things
 const gfp_t BINDINGS_GFP_KERNEL = GFP_KERNEL;

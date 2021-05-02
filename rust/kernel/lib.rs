@@ -65,6 +65,11 @@ pub mod iov_iter;
 mod types;
 pub mod user_ptr;
 
+pub mod platform_driver;
+
+#[cfg(CONFIG_REGMAP)]
+pub mod regmap;
+
 pub use crate::error::{Error, Result};
 pub use crate::types::{CStr, Mode};
 

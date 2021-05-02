@@ -104,3 +104,20 @@ impl From<AllocError> for Error {
         Error::ENOMEM
     }
 }
+
+pub(crate) unsafe fn ptr_err_check<T>(ptr: *mut T) -> Result<*mut T> {
+    extern "C" {
+        #[allow(improper_ctypes)]
+        fn rust_helper_is_err(ptr: *const c_types::c_void) -> bool;
+
+        #[allow(improper_ctypes)]
+        fn rust_helper_ptr_err(ptr: *const c_types::c_void) -> c_types::c_long;
+    }
+
+    if rust_helper_is_err(ptr as _) {
+        return Err(Error::from_kernel_errno(
+            rust_helper_ptr_err(ptr as _) as i32
+        ));
+    }
+    Ok(ptr)
+}

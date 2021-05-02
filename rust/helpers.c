@@ -7,6 +7,8 @@
 #include <linux/gfp.h>
 #include <linux/highmem.h>
 #include <linux/uio.h>
+#include <linux/platform_device.h>
+#include <linux/regmap.h>
 
 void rust_helper_BUG(void)
 {
@@ -104,6 +106,44 @@ size_t rust_helper_copy_to_iter(const void *addr, size_t bytes, struct iov_iter 
 	return copy_to_iter(addr, bytes, i);
 }
 EXPORT_SYMBOL_GPL(rust_helper_copy_to_iter);
+
+void *
+rust_helper_platform_get_drvdata(const struct platform_device *pdev)
+{
+	return platform_get_drvdata(pdev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_platform_get_drvdata);
+
+void
+rust_helper_platform_set_drvdata(struct platform_device *pdev,
+				 void *data)
+{
+	return platform_set_drvdata(pdev, data);
+}
+EXPORT_SYMBOL_GPL(rust_helper_platform_set_drvdata);
+
+bool rust_helper_is_err(__force const void *ptr)
+{
+	return IS_ERR(ptr);
+}
+EXPORT_SYMBOL_GPL(rust_helper_is_err);
+
+long rust_helper_ptr_err(__force const void *ptr)
+{
+	return PTR_ERR(ptr);
+}
+EXPORT_SYMBOL_GPL(rust_helper_ptr_err);
+
+#ifdef CONFIG_REGMAP
+struct regmap *
+rust_helper_devm_regmap_init_mmio(struct device *dev,
+				  void __iomem *regs,
+				  const struct regmap_config *config)
+{
+	return devm_regmap_init_mmio(dev, regs, config);
+}
+EXPORT_SYMBOL_GPL(rust_helper_devm_regmap_init_mmio);
+#endif
 
 #if !defined(CONFIG_ARM)
 // See https://github.com/rust-lang/rust-bindgen/issues/1671
