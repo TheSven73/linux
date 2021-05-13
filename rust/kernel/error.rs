@@ -104,3 +104,62 @@ impl From<AllocError> for Error {
         Error::ENOMEM
     }
 }
+
+// # Invariant: `-bindings::MAX_ERRNO` fits in an `i16`.
+crate::static_assert!(bindings::MAX_ERRNO as i64 <= -(i16::MIN as i64));
+
+/// Transform a kernel "error pointer" to a normal pointer.
+///
+/// Some kernel C API functions return an "error pointer" which optionally
+/// embeds an `errno`. Callers are supposed to check the returned pointer
+/// for errors. This function performs the check and converts the "error pointer"
+/// to a normal pointer in an idiomatic fashion.
+///
+/// # Safety
+///
+/// `ptr` must be valid or null.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// fn devm_platform_ioremap_resource(
+///     pdev: &mut PlatformDevice,
+///     index: u32,
+/// ) -> Result<*mut c_types::c_void> {
+///     // SAFETY: FFI call.
+///     unsafe {
+///         from_kernel_err_ptr(bindings::devm_platform_ioremap_resource(
+///             pdev.to_ptr(),
+///             index,
+///         ))
+///     }
+/// }
+/// ```
+// TODO: remove `dead_code` marker once an in-kernel client is available.
+#[allow(dead_code)]
+pub(crate) fn from_kernel_err_ptr<T>(ptr: *mut T) -> Result<*mut T> {
+    extern "C" {
+        #[allow(improper_ctypes)]
+        fn rust_helper_is_err(ptr: *const c_types::c_void) -> bool;
+
+        #[allow(improper_ctypes)]
+        fn rust_helper_ptr_err(ptr: *const c_types::c_void) -> c_types::c_long;
+    }
+
+    // SAFETY: any pointer can be safely cast to a `*const c_types::c_void`.
+    let const_ptr = ptr as *const c_types::c_void;
+    // SAFETY: `IS_ERR()` requires a valid-or-null pointer, and `const_ptr`
+    // is valid-or-null as per Safety above. So it is safe to call.
+    if unsafe { rust_helper_is_err(const_ptr) } {
+        // SAFETY: `PTR_ERR()` equires a valid-or-null pointer, and `const_ptr`
+        // is valid-or-null as per Safety above. So it is safe to call.
+        let err = unsafe { rust_helper_ptr_err(const_ptr) };
+        // NO-OVERFLOW: if `rust_helper_is_err()` returns `true`,
+        // then `rust_helper_ptr_err()` is guaranteed to return a
+        // negative value greater-or-equal to `-bindings::MAX_ERRNO`,
+        // which always fits in an `i16`, as per the invariant above.
+        // And an `i16` always fits in an `i32`. So the cast is safe.
+        return Err(Error::from_kernel_errno(err as i32));
+    }
+    Ok(ptr)
+}
