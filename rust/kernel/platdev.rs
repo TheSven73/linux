@@ -9,6 +9,7 @@
 use crate::{
     bindings, c_types,
     error::{Error, Result},
+    of::OfMatchTable,
     pr_info, CStr,
 };
 use alloc::boxed::Box;
@@ -40,6 +41,7 @@ impl Registration {
     fn register(
         self: Pin<&mut Self>,
         name: CStr<'static>,
+        of_match_tbl: Option<OfMatchTable>,
         module: &'static crate::ThisModule,
     ) -> Result {
         // SAFETY: We must ensure that we never move out of `this`.
@@ -49,6 +51,9 @@ impl Registration {
             return Err(Error::EINVAL);
         }
         this.pdrv.driver.name = name.as_ptr() as *const c_types::c_char;
+        if let Some(of_match_tbl) = of_match_tbl {
+            this.pdrv.driver.of_match_table = of_match_tbl.into_table_ptr();
+        }
         this.pdrv.probe = Some(probe_callback);
         this.pdrv.remove = Some(remove_callback);
         // SAFETY:
@@ -56,6 +61,10 @@ impl Registration {
         //   - `name` pointer has static lifetime.
         //   - `module.0` lives at least as long as the module.
         //   - `probe()` and `remove()` are static functions.
+        //   - `of_match_tbl` is either:
+        //      - a raw pointer created from a heap structure which is never deallocated,
+        //        therefore it lives at least as long as the module, or
+        //      - null.
         let ret = unsafe { bindings::__platform_driver_register(&mut this.pdrv, module.0) };
         if ret < 0 {
             return Err(Error::from_kernel_errno(ret));
@@ -69,10 +78,11 @@ impl Registration {
     /// Returns a pinned heap-allocated representation of the registration.
     pub fn new_pinned(
         name: CStr<'static>,
+        of_match_tbl: Option<OfMatchTable>,
         module: &'static crate::ThisModule,
     ) -> Result<Pin<Box<Self>>> {
         let mut r = Pin::from(Box::try_new(Self::default())?);
-        r.as_mut().register(name, module)?;
+        r.as_mut().register(name, of_match_tbl, module)?;
         Ok(r)
     }
 }
