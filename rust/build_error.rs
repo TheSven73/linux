@@ -27,7 +27,6 @@ pub const fn build_error(msg: &'static str) -> ! {
     core::panicking::panic(msg);
 }
 
-#[cfg(CONFIG_RUST_BUILD_ASSERT_WARN)]
 #[link_section = ".gnu.warning.build_error"]
 #[used]
 static BUILD_ERROR_WARNING: [u8; 45] = *b"call to build_error present after compilation";
