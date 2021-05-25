@@ -44,6 +44,7 @@ pub mod file;
 pub mod file_operations;
 pub mod miscdev;
 pub mod pages;
+pub mod traits;
 
 pub mod linked_list;
 mod raw_list;
