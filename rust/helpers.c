@@ -7,6 +7,7 @@
 #include <linux/gfp.h>
 #include <linux/highmem.h>
 #include <linux/uio.h>
+#include <linux/platform_device.h>
 
 void rust_helper_BUG(void)
 {
@@ -116,6 +117,21 @@ long rust_helper_ptr_err(__force const void *ptr)
 	return PTR_ERR(ptr);
 }
 EXPORT_SYMBOL_GPL(rust_helper_ptr_err);
+
+void *
+rust_helper_platform_get_drvdata(const struct platform_device *pdev)
+{
+	return platform_get_drvdata(pdev);
+}
+EXPORT_SYMBOL_GPL(rust_helper_platform_get_drvdata);
+
+void
+rust_helper_platform_set_drvdata(struct platform_device *pdev,
+				 void *data)
+{
+	return platform_set_drvdata(pdev, data);
+}
+EXPORT_SYMBOL_GPL(rust_helper_platform_set_drvdata);
 
 #if !defined(CONFIG_ARM)
 // See https://github.com/rust-lang/rust-bindgen/issues/1671
