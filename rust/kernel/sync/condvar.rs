@@ -8,6 +8,8 @@
 use super::{Guard, Lock, NeedsLockClass};
 use crate::bindings;
 use crate::str::CStr;
+use crate::Result;
+use alloc::boxed::Box;
 use core::{cell::UnsafeCell, marker::PhantomPinned, mem::MaybeUninit, pin::Pin};
 
 extern "C" {
@@ -133,5 +135,120 @@ impl CondVar {
 impl NeedsLockClass for CondVar {
     unsafe fn init(self: Pin<&Self>, name: &'static CStr, key: *mut bindings::lock_class_key) {
         unsafe { bindings::__init_waitqueue_head(self.wait_list.get(), name.as_char_ptr(), key) };
+    }
+}
+
+/// Exposes the kernel's [`struct wait_queue_head`] as a condition variable. It allows the caller to
+/// atomically release the given lock and go to sleep. It reacquires the lock when it wakes up. And
+/// it wakes up when notified by another thread (via [`CondVar::notify_one`] or
+/// [`CondVar::notify_all`]) or because the thread received a signal.
+///
+/// [`struct wait_queue_head`]: ../../../include/linux/wait.h
+///
+/// # Invariants
+///
+/// `wait_list` never moves out of its [`Box`].
+pub struct BoxedCondVar {
+    /// A `bindings::wait_queue_head` kernel object.
+    /// It contains a [`struct list_head`] that is self-referential, so
+    /// it cannot be safely moved once it is initialised.
+    /// We guarantee that it will never move, as per the invariant above.
+    wait_list: Box<UnsafeCell<bindings::wait_queue_head>>,
+}
+
+// SAFETY: `CondVar` only uses a `struct wait_queue_head`, which is safe to use on any thread.
+unsafe impl Send for BoxedCondVar {}
+
+// SAFETY: `CondVar` only uses a `struct wait_queue_head`, which is safe to use on multiple threads
+// concurrently.
+unsafe impl Sync for BoxedCondVar {}
+
+impl BoxedCondVar {
+    /// Constructs a new condition variable.
+    ///
+    /// # Safety
+    ///
+    /// `key` must point to a valid memory location as it will be used by the kernel.
+    pub unsafe fn new_with_key(
+        name: &'static CStr,
+        key: *mut bindings::lock_class_key,
+    ) -> Result<Self> {
+        let cv = Self {
+            wait_list: Box::try_new(UnsafeCell::new(bindings::wait_queue_head::default()))?,
+        };
+        unsafe {
+            bindings::__init_waitqueue_head(cv.wait_list.get(), name.as_char_ptr(), key);
+        }
+        Ok(cv)
+    }
+
+    /// Atomically releases the given lock (whose ownership is proven by the guard) and puts the
+    /// thread to sleep. It wakes up when notified by [`CondVar::notify_one`] or
+    /// [`CondVar::notify_all`], or when the thread receives a signal.
+    ///
+    /// Returns whether there is a signal pending.
+    #[must_use = "wait returns if a signal is pending, so the caller must check the return value"]
+    pub fn wait<L: Lock>(&self, guard: &mut Guard<'_, L>) -> bool {
+        let lock = guard.lock;
+        let mut wait = MaybeUninit::<bindings::wait_queue_entry>::uninit();
+
+        // SAFETY: `wait` points to valid memory.
+        unsafe { rust_helper_init_wait(wait.as_mut_ptr()) };
+
+        // SAFETY: Both `wait` and `wait_list` point to valid memory.
+        unsafe {
+            bindings::prepare_to_wait_exclusive(
+                self.wait_list.get(),
+                wait.as_mut_ptr(),
+                bindings::TASK_INTERRUPTIBLE as _,
+            );
+        }
+
+        // SAFETY: The guard is evidence that the caller owns the lock.
+        unsafe { lock.unlock() };
+
+        // SAFETY: No arguments, switches to another thread.
+        unsafe { bindings::schedule() };
+
+        lock.lock_noguard();
+
+        // SAFETY: Both `wait` and `wait_list` point to valid memory.
+        unsafe { bindings::finish_wait(self.wait_list.get(), wait.as_mut_ptr()) };
+
+        super::signal_pending()
+    }
+
+    /// Calls the kernel function to notify the appropriate number of threads with the given flags.
+    fn notify(&self, count: i32, flags: u32) {
+        // SAFETY: `wait_list` points to valid memory.
+        unsafe {
+            bindings::__wake_up(
+                self.wait_list.get(),
+                bindings::TASK_NORMAL,
+                count,
+                flags as _,
+            )
+        };
+    }
+
+    /// Wakes a single waiter up, if any. This is not 'sticky' in the sense that if no thread is
+    /// waiting, the notification is lost completely (as opposed to automatically waking up the
+    /// next waiter).
+    pub fn notify_one(&self) {
+        self.notify(1, 0);
+    }
+
+    /// Wakes all waiters up, if any. This is not 'sticky' in the sense that if no thread is
+    /// waiting, the notification is lost completely (as opposed to automatically waking up the
+    /// next waiter).
+    pub fn notify_all(&self) {
+        self.notify(0, 0);
+    }
+
+    /// Wakes all waiters up. If they were added by `epoll`, they are also removed from the list of
+    /// waiters. This is useful when cleaning up a condition variable that may be waited on by
+    /// threads that use `epoll`.
+    pub fn free_waiters(&self) {
+        self.notify(1, bindings::POLLHUP | POLLFREE);
     }
 }

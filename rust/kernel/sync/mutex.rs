@@ -7,6 +7,8 @@
 use super::{Guard, Lock, NeedsLockClass};
 use crate::bindings;
 use crate::str::CStr;
+use crate::Result;
+use alloc::boxed::Box;
 use core::{cell::UnsafeCell, marker::PhantomPinned, pin::Pin};
 
 /// Safely initialises a [`Mutex`] with the given name, generating a new lock class.
@@ -97,5 +99,87 @@ impl<T: ?Sized> Lock for Mutex<T> {
 
     fn locked_data(&self) -> &UnsafeCell<T> {
         &self.data
+    }
+}
+
+/// Exposes the kernel's [`struct mutex`]. When multiple threads attempt to lock the same mutex,
+/// only one at a time is allowed to progress, the others will block (sleep) until the mutex is
+/// unlocked, at which point another thread will be allowed to wake up and make progress.
+///
+/// Since it may block, [`Mutex`] needs to be used with care in atomic contexts.
+///
+/// [`struct mutex`]: ../../../include/linux/mutex.h
+///
+/// # Invariants
+///
+/// `mutex` never moves out of its [`Box`].
+pub struct BoxedMutex<T: ?Sized> {
+    /// A `struct mutex` kernel object.
+    /// It contains a [`struct mutex`] that is self-referential, so it
+    /// cannot be safely moved once it is initialised. We guarantee that
+    /// it will never move, as per the invariant above.
+    mutex: Box<UnsafeCell<bindings::mutex>>,
+
+    /// The data protected by the mutex.
+    data: UnsafeCell<T>,
+}
+
+// SAFETY: `Mutex` can be transferred across thread boundaries iff the data it protects can.
+unsafe impl<T: ?Sized + Send> Send for BoxedMutex<T> {}
+
+// SAFETY: `Mutex` serialises the interior mutability it provides, so it is `Sync` as long as the
+// data it protects is `Send`.
+unsafe impl<T: ?Sized + Send> Sync for BoxedMutex<T> {}
+
+impl<T> BoxedMutex<T> {
+    /// Constructs a new mutex.
+    ///
+    /// # Safety
+    ///
+    /// `key` must point to a valid memory location as it will be used by the kernel.
+    pub unsafe fn new_with_key(
+        t: T,
+        name: &'static CStr,
+        key: *mut bindings::lock_class_key,
+    ) -> Result<Self> {
+        let m = Self {
+            mutex: Box::try_new(UnsafeCell::new(bindings::mutex::default()))?,
+            data: UnsafeCell::new(t),
+        };
+        unsafe {
+            bindings::__mutex_init(m.mutex.get(), name.as_char_ptr(), key);
+        }
+        Ok(m)
+    }
+}
+
+impl<T: ?Sized> Lock for BoxedMutex<T> {
+    type Inner = T;
+
+    fn lock_noguard(&self) {
+        // SAFETY: `mutex` points to valid memory.
+        unsafe {
+            rust_helper_mutex_lock(self.mutex.get());
+        }
+    }
+
+    unsafe fn unlock(&self) {
+        unsafe {
+            bindings::mutex_unlock(self.mutex.get());
+        }
+    }
+
+    fn locked_data(&self) -> &UnsafeCell<T> {
+        &self.data
+    }
+}
+
+impl<T: ?Sized> BoxedMutex<T> {
+    /// Locks the mutex and gives the caller access to the data protected by it. Only one thread at
+    /// a time is allowed to access the protected data.
+    pub fn lock(&self) -> Guard<'_, Self> {
+        self.lock_noguard();
+        // SAFETY: The mutex was just acquired.
+        unsafe { Guard::new(self) }
     }
 }

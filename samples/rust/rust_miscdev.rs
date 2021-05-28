@@ -9,12 +9,12 @@ use alloc::{boxed::Box, sync::Arc};
 use core::pin::Pin;
 use kernel::prelude::*;
 use kernel::{
-    c_str,
+    boxed_condvar, boxed_mutex, c_str,
     file::File,
     file_operations::{FileOpener, FileOperations},
     io_buffer::{IoBufferReader, IoBufferWriter},
     miscdev,
-    sync::{CondVar, Mutex},
+    sync::{BoxedCondVar, BoxedMutex},
     Error,
 };
 
@@ -33,34 +33,26 @@ struct SharedStateInner {
 }
 
 struct SharedState {
-    state_changed: CondVar,
-    inner: Mutex<SharedStateInner>,
+    state_changed: BoxedCondVar,
+    inner: BoxedMutex<SharedStateInner>,
 }
 
 impl SharedState {
-    fn try_new() -> Result<Pin<Arc<Self>>> {
-        let state = Arc::try_pin(Self {
-            // SAFETY: `condvar_init!` is called below.
-            state_changed: unsafe { CondVar::new() },
-            // SAFETY: `mutex_init!` is called below.
-            inner: unsafe { Mutex::new(SharedStateInner { token_count: 0 }) },
-        })?;
-        // SAFETY: `state_changed` is pinned behind `Pin<Arc>`.
-        let state_changed = unsafe { Pin::new_unchecked(&state.state_changed) };
-        kernel::condvar_init!(state_changed, "SharedState::state_changed");
-        // SAFETY: `inner` is pinned behind `Pin<Arc>`.
-        let inner = unsafe { Pin::new_unchecked(&state.inner) };
-        kernel::mutex_init!(inner, "SharedState::inner");
-        Ok(state)
+    fn try_new() -> Result<Arc<Self>> {
+        let state = Self {
+            state_changed: boxed_condvar!("SharedState::state_changed")?,
+            inner: boxed_mutex!(SharedStateInner { token_count: 0 }, "SharedState::inner")?,
+        };
+        Ok(Arc::try_new(state)?)
     }
 }
 
 struct Token {
-    shared: Pin<Arc<SharedState>>,
+    shared: Arc<SharedState>,
 }
 
-impl FileOpener<Pin<Arc<SharedState>>> for Token {
-    fn open(shared: &Pin<Arc<SharedState>>) -> Result<Self::Wrapper> {
+impl FileOpener<Arc<SharedState>> for Token {
+    fn open(shared: &Arc<SharedState>) -> Result<Self::Wrapper> {
         Ok(Box::try_new(Self {
             shared: shared.clone(),
         })?)
@@ -122,7 +114,7 @@ impl FileOperations for Token {
 }
 
 struct RustMiscdev {
-    _dev: Pin<Box<miscdev::Registration<Pin<Arc<SharedState>>>>>,
+    _dev: Pin<Box<miscdev::Registration<Arc<SharedState>>>>,
 }
 
 impl KernelModule for RustMiscdev {

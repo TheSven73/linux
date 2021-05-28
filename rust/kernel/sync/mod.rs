@@ -30,9 +30,11 @@ mod mutex;
 mod spinlock;
 
 pub use arc::{Ref, RefCount, RefCounted};
+pub use condvar::BoxedCondVar;
 pub use condvar::CondVar;
 pub use guard::{Guard, Lock};
 pub use locked_by::LockedBy;
+pub use mutex::BoxedMutex;
 pub use mutex::Mutex;
 pub use spinlock::SpinLock;
 
@@ -55,6 +57,34 @@ macro_rules! init_with_lockdep {
         unsafe {
             $crate::sync::NeedsLockClass::init($obj, $crate::c_str!($name), CLASS.as_mut_ptr())
         };
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! boxed_mutex {
+    ($obj:expr, $name:literal) => {{
+        static mut CLASS: core::mem::MaybeUninit<$crate::bindings::lock_class_key> =
+            core::mem::MaybeUninit::uninit();
+        // SAFETY: `CLASS` is never used by Rust code directly; the kernel may change it though.
+        #[allow(unused_unsafe)]
+        unsafe {
+            $crate::sync::BoxedMutex::new_with_key($obj, $crate::c_str!($name), CLASS.as_mut_ptr())
+        }
+    }};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! boxed_condvar {
+    ($name:literal) => {{
+        static mut CLASS: core::mem::MaybeUninit<$crate::bindings::lock_class_key> =
+            core::mem::MaybeUninit::uninit();
+        // SAFETY: `CLASS` is never used by Rust code directly; the kernel may change it though.
+        #[allow(unused_unsafe)]
+        unsafe {
+            $crate::sync::BoxedCondVar::new_with_key($crate::c_str!($name), CLASS.as_mut_ptr())
+        }
     }};
 }
 
