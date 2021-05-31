@@ -16,6 +16,10 @@ use core::str::{self, Utf8Error};
 ///
 /// The kernel defines a set of integer generic error codes based on C and
 /// POSIX ones. These codes may have a more specific meaning in some contexts.
+///
+/// # Invariants
+///
+/// The value stored in [`Error`] is a valid `errno` (i.e. `>= -MAX_ERRNO && < 0`)
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Error(c_types::c_int);
 
@@ -57,7 +61,32 @@ impl Error {
     pub const EBADF: Self = Error(-(bindings::EBADF as i32));
 
     /// Creates an [`Error`] from a kernel error code.
+    ///
+    /// When `errno` given is invalid, a warning will be printed
+    /// and the `errno` will be converted to `EINVAL`.
     pub fn from_kernel_errno(errno: c_types::c_int) -> Error {
+        if errno < -(bindings::MAX_ERRNO as i32) || errno >= 0 {
+            crate::pr_warn!(
+                "Creating Error with an invalid errno {}, convert \
+            it to EINVAL",
+                errno
+            );
+            return Error::EINVAL;
+        }
+
+        // INVARIANT: the check above ensures the type invariant
+        // will hold.
+        Error(errno)
+    }
+
+    /// Creates an [`Error`] from a kernel error code without a sanity check
+    ///
+    /// # Safety
+    ///
+    /// `errno` must be within error code range (i.e. `>= -MAX_ERRNO && < 0`).
+    pub unsafe fn from_kernel_errno_unchecked(errno: c_types::c_int) -> Error {
+        // INVARIANT: the contract ensures the type invariant
+        // will hold.
         Error(errno)
     }
 
