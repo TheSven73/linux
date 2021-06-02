@@ -64,7 +64,7 @@ impl Error {
     ///
     /// When `errno` given is invalid, a warning will be printed
     /// and the `errno` will be converted to `EINVAL`.
-    pub fn from_kernel_errno(errno: c_types::c_int) -> Error {
+    pub(crate) fn from_kernel_errno(errno: c_types::c_int) -> Error {
         if errno < -(bindings::MAX_ERRNO as i32) || errno >= 0 {
             crate::pr_warn!(
                 "Creating Error with an invalid errno {}, convert \
@@ -84,7 +84,7 @@ impl Error {
     /// # Safety
     ///
     /// `errno` must be within error code range (i.e. `>= -MAX_ERRNO && < 0`).
-    pub unsafe fn from_kernel_errno_unchecked(errno: c_types::c_int) -> Error {
+    pub(crate) unsafe fn from_kernel_errno_unchecked(errno: c_types::c_int) -> Error {
         // INVARIANT: the contract ensures the type invariant
         // will hold.
         Error(errno)
