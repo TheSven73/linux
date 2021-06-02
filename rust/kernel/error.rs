@@ -256,7 +256,10 @@ pub(crate) fn from_kernel_err_ptr<T>(ptr: *mut T) -> Result<*mut T> {
         // which always fits in an `i16`, as per the invariant above.
         // And an `i16` always fits in an `i32`. So casting `err` to
         // an `i32` can never overflow, and is always valid.
-        return Err(Error::from_kernel_errno(err as i32));
+        //
+        // INVARIANT: `rust_helper_is_err()` ensures `err` is a
+        // negative value greater-or-equal to `-bindings::MAX_ERRNO`
+        return Err(unsafe { Error::from_kernel_errno_unchecked(err as i32) });
     }
     Ok(ptr)
 }
