@@ -290,3 +290,33 @@ pub(crate) unsafe fn from_kernel_int_result(retval: c_types::c_int) -> Result {
         errno => Err(Error::from_kernel_errno_unchecked(errno)),
     }
 }
+
+/// Transform a kernel integer result to a [`Result<c_types::c_uint>`].
+///
+/// Some kernel C API functions return a result in the form of an integer:
+/// zero or positive if ok, a negative errno on error. This function converts
+/// such a return value into an idiomatic [`Result<c_types::c_uint>`].
+///
+/// # Safety
+///
+/// `retval` must be non-negative or a valid negative errno (i.e. `retval` must
+/// be in `[-MAX_ERRNO..]`).
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let fd = unsafe { bindings::get_unused_fd_flags(flags) };
+/// // SAFETY: `bindings::get_unused_fd_flags()` returns a non-negative
+/// // `fd` on success, or a valid negative `errno` on error.
+/// let fd = unsafe { from_kernel_int_result_uint(fd)? };
+/// ```
+pub(crate) unsafe fn from_kernel_int_result_uint(
+    retval: c_types::c_int,
+) -> Result<c_types::c_uint> {
+    match retval {
+        // CAST: a non-negative `c_types::c_int` always fits in a `c_types::c_uint`.
+        success if success >= 0 => Ok(success as c_types::c_uint),
+        // SAFETY: Safety above and match arm guarantee that `errno` is a valid negative `errno`.
+        errno => Err(Error::from_kernel_errno_unchecked(errno)),
+    }
+}
