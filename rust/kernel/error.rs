@@ -263,3 +263,30 @@ pub(crate) fn from_kernel_err_ptr<T>(ptr: *mut T) -> Result<*mut T> {
     }
     Ok(ptr)
 }
+
+/// Transform a kernel integer result to a [`Result`].
+///
+/// Some kernel C API functions return a result in the form of an integer:
+/// zero if ok, a negative errno on error. This function converts such a
+/// return value into an idiomatic [`Result`].
+///
+/// # Safety
+///
+/// `retval` must be non-negative or a valid negative errno (i.e. `retval` must
+/// be in `[-MAX_ERRNO..]`).
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// let ret = unsafe { bindings::misc_register(&mut this.mdev) };
+/// // SAFETY: `misc_register` returns zero on success, or a valid
+/// // negative errno on failure.
+/// unsafe { from_kernel_int_result(ret)?; }
+/// ```
+pub(crate) unsafe fn from_kernel_int_result(retval: c_types::c_int) -> Result {
+    match retval {
+        success if success >= 0 => Ok(()),
+        // SAFETY: Safety above and match arm guarantee that `errno` is a valid negative `errno`.
+        errno => Err(Error::from_kernel_errno_unchecked(errno)),
+    }
+}
