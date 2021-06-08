@@ -16,7 +16,7 @@ use crate::{
     from_kernel_result,
     io_buffer::{IoBufferReader, IoBufferWriter},
     iov_iter::IovIter,
-    sync::CondVar,
+    sync::{BoxedCondVar, CondVar},
     types::PointerWrapper,
     user_ptr::{UserSlicePtr, UserSlicePtrReader, UserSlicePtrWriter},
 };
@@ -51,6 +51,30 @@ impl PollTable {
     /// If the condition variable is destroyed before the file, then [`CondVar::free_waiters`] must
     /// be called to ensure that all waiters are flushed out.
     pub unsafe fn register_wait<'a>(&self, file: &'a File, cv: &'a CondVar) {
+        if self.ptr.is_null() {
+            return;
+        }
+
+        // SAFETY: `PollTable::ptr` is guaranteed to be valid by the type invariants and the null
+        // check above.
+        let table = unsafe { &*self.ptr };
+        if let Some(proc) = table._qproc {
+            // SAFETY: All pointers are known to be valid.
+            unsafe { proc(file.ptr as _, cv.wait_list.get(), self.ptr) }
+        }
+    }
+
+    /// Associates the given file and condition variable to this poll table. It means notifying the
+    /// condition variable will notify the poll table as well; additionally, the association
+    /// between the condition variable and the file will automatically be undone by the kernel when
+    /// the file is destructed. To unilaterally remove the association before then, one can call
+    /// [`CondVar::free_waiters`].
+    ///
+    /// # Safety
+    ///
+    /// If the condition variable is destroyed before the file, then [`CondVar::free_waiters`] must
+    /// be called to ensure that all waiters are flushed out.
+    pub unsafe fn register_wait2<'a>(&self, file: &'a File, cv: &'a BoxedCondVar) {
         if self.ptr.is_null() {
             return;
         }

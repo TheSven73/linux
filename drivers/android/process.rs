@@ -7,14 +7,14 @@ use core::{
     pin::Pin,
 };
 use kernel::{
-    bindings, c_types,
+    bindings, boxed_mutex, c_types,
     file::File,
     file_operations::{FileOpener, FileOperations, IoctlCommand, IoctlHandler, PollTable},
     io_buffer::{IoBufferReader, IoBufferWriter},
     linked_list::List,
     pages::Pages,
     prelude::*,
-    sync::{Guard, Mutex, Ref, RefCount, RefCounted},
+    sync::{BoxedMutex, Guard, Ref, RefCount, RefCounted},
     user_ptr::{UserSlicePtr, UserSlicePtrReader},
     Error,
 };
@@ -281,11 +281,11 @@ pub(crate) struct Process {
     // holding the lock. We may want to split up the process state at some point to use a spin lock
     // for the other fields; we can also get rid of allocations in BTreeMap once we replace it.
     // TODO: Make this private again.
-    pub(crate) inner: Mutex<ProcessInner>,
+    pub(crate) inner: BoxedMutex<ProcessInner>,
 
     // References are in a different mutex to avoid recursive acquisition when
     // incrementing/decrementing a node in another process.
-    node_refs: Mutex<ProcessNodeRefs>,
+    node_refs: BoxedMutex<ProcessNodeRefs>,
 }
 
 unsafe impl Send for Process {}
@@ -293,21 +293,13 @@ unsafe impl Sync for Process {}
 
 impl Process {
     fn new(ctx: Arc<Context>) -> Result<Ref<Self>> {
-        let mut proc_ref = Ref::try_new(Self {
+        let proc_ref = Ref::try_new(Self {
             ref_count: RefCount::new(),
             ctx,
-            // SAFETY: `inner` is initialised in the call to `mutex_init` below.
-            inner: unsafe { Mutex::new(ProcessInner::new()) },
+            inner: boxed_mutex!(ProcessInner::new(), "Process::inner")?,
             // SAFETY: `node_refs` is initialised in the call to `mutex_init` below.
-            node_refs: unsafe { Mutex::new(ProcessNodeRefs::new()) },
+            node_refs: boxed_mutex!(ProcessNodeRefs::new(), "Process::node_refs")?,
         })?;
-        let process = Ref::get_mut(&mut proc_ref).ok_or(Error::EINVAL)?;
-        // SAFETY: `inner` is pinned behind the `Arc` reference.
-        let pinned = unsafe { Pin::new_unchecked(&process.inner) };
-        kernel::mutex_init!(pinned, "Process::inner");
-        // SAFETY: `node_refs` is pinned behind the `Arc` reference.
-        let pinned = unsafe { Pin::new_unchecked(&process.node_refs) };
-        kernel::mutex_init!(pinned, "Process::node_refs");
         Ok(proc_ref)
     }
 
@@ -931,7 +923,7 @@ impl<'a> Registration<'a> {
     fn new(
         process: &'a Process,
         thread: &'a Arc<Thread>,
-        guard: &mut Guard<Mutex<ProcessInner>>,
+        guard: &mut Guard<BoxedMutex<ProcessInner>>,
     ) -> Self {
         guard.ready_threads.push_back(thread.clone());
         Self { process, thread }

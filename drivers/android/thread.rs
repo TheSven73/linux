@@ -3,13 +3,13 @@
 use alloc::sync::Arc;
 use core::{alloc::AllocError, mem::size_of, pin::Pin};
 use kernel::{
-    bindings,
+    bindings, boxed_condvar,
     file::File,
     file_operations::PollTable,
     io_buffer::{IoBufferReader, IoBufferWriter},
     linked_list::{GetLinks, Links, List},
     prelude::*,
-    sync::{CondVar, Ref, SpinLock},
+    sync::{BoxedCondVar, Ref, SpinLock},
     user_ptr::{UserSlicePtr, UserSlicePtrWriter},
     Error,
 };
@@ -228,7 +228,7 @@ pub(crate) struct Thread {
     pub(crate) id: i32,
     pub(crate) process: Ref<Process>,
     inner: SpinLock<InnerThread>,
-    work_condvar: CondVar,
+    work_condvar: BoxedCondVar,
     links: Links<Thread>,
 }
 
@@ -241,15 +241,13 @@ impl Thread {
             process,
             // SAFETY: `inner` is initialised in the call to `spinlock_init` below.
             inner: unsafe { SpinLock::new(InnerThread::new()) },
-            // SAFETY: `work_condvar` is initalised in the call to `condvar_init` below.
-            work_condvar: unsafe { CondVar::new() },
+            work_condvar: boxed_condvar!("Thread::work_condvar")?,
             links: Links::new(),
         })?;
         let thread = Arc::get_mut(&mut arc).unwrap();
         // SAFETY: `inner` is pinned behind the `Arc` reference.
         let inner = unsafe { Pin::new_unchecked(&thread.inner) };
         kernel::spinlock_init!(inner, "Thread::inner");
-        kernel::condvar_init!(thread.pinned_condvar(), "Thread::work_condvar");
         {
             let mut inner = arc.inner.lock();
             inner.set_reply_work(reply_work);
@@ -258,8 +256,8 @@ impl Thread {
         Ok(arc)
     }
 
-    fn pinned_condvar(&self) -> Pin<&CondVar> {
-        unsafe { Pin::new_unchecked(&self.work_condvar) }
+    fn pinned_condvar(&self) -> &BoxedCondVar {
+        &self.work_condvar
     }
 
     pub(crate) fn set_current_transaction(&self, transaction: Arc<Transaction>) {
@@ -754,7 +752,7 @@ impl Thread {
 
     pub(crate) fn poll(&self, file: &File, table: &PollTable) -> (bool, u32) {
         // SAFETY: `free_waiters` is called on release.
-        unsafe { table.register_wait(file, &self.work_condvar) };
+        unsafe { table.register_wait2(file, &self.work_condvar) };
         let mut inner = self.inner.lock();
         (inner.should_use_process_work_queue(), inner.poll())
     }

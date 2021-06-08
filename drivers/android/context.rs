@@ -4,7 +4,8 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 use core::pin::Pin;
-use kernel::{bindings, prelude::*, sync::Mutex, Error};
+use kernel::boxed_mutex;
+use kernel::{bindings, prelude::*, sync::BoxedMutex, Error};
 
 use crate::{
     node::NodeRef,
@@ -17,7 +18,7 @@ struct Manager {
 }
 
 pub(crate) struct Context {
-    manager: Mutex<Manager>,
+    manager: BoxedMutex<Manager>,
 }
 
 unsafe impl Send for Context {}
@@ -25,20 +26,15 @@ unsafe impl Sync for Context {}
 
 impl Context {
     pub(crate) fn new() -> Result<Pin<Arc<Self>>> {
-        let mut ctx_ref = Arc::try_new(Self {
-            // SAFETY: Init is called below.
-            manager: unsafe {
-                Mutex::new(Manager {
+        let ctx_ref = Arc::try_new(Self {
+            manager: boxed_mutex!(
+                Manager {
                     node: None,
                     uid: None,
-                })
-            },
+                },
+                "Context::manager"
+            )?,
         })?;
-        let ctx = Arc::get_mut(&mut ctx_ref).unwrap();
-
-        // SAFETY: `manager` is also pinned when `ctx` is.
-        let manager = unsafe { Pin::new_unchecked(&ctx.manager) };
-        kernel::mutex_init!(manager, "Context::manager");
 
         // SAFETY: `ctx_ref` is pinned behind the `Arc` reference.
         Ok(unsafe { Pin::new_unchecked(ctx_ref) })

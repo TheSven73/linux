@@ -153,7 +153,7 @@ pub struct BoxedCondVar {
     /// It contains a [`struct list_head`] that is self-referential, so
     /// it cannot be safely moved once it is initialised.
     /// We guarantee that it will never move, as per the invariant above.
-    wait_list: Box<UnsafeCell<bindings::wait_queue_head>>,
+    pub(crate) wait_list: Box<UnsafeCell<bindings::wait_queue_head>>,
 }
 
 // SAFETY: `CondVar` only uses a `struct wait_queue_head`, which is safe to use on any thread.
