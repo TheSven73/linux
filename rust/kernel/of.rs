@@ -4,72 +4,78 @@
 //!
 //! C header: [`include/linux/of_*.h`](../../../../include/linux/of_*.h)
 
-use alloc::boxed::Box;
+use crate::{bindings, c_types, str::CStr};
 
-use crate::{
-    bindings, c_types,
-    error::{Error, Result},
-    str::CStr,
-    types::PointerWrapper,
-};
+use core::ptr;
 
-use core::mem::transmute;
-
-type InnerTable = Box<[bindings::of_device_id; 2]>;
-
-/// Wraps a kernel Open Firmware / devicetree match table.
+/// A kernel Open Firmware / devicetree match table.
 ///
-/// Rust drivers may create this structure to match against devices
+/// Rust drivers may use this trait to match against devices
 /// described in the devicetree.
-///
-/// The ['PointerWrapper'] trait provides conversion to/from a raw pointer,
-/// suitable to be assigned to a `bindings::device_driver::of_match_table`.
+pub trait OfMatchTable {
+    /// Returns the table as a static lifetime, sentinel-terminated C array.
+    ///
+    /// This is suitable to be assigned to the kernel's `of_match_table` field.
+    fn as_ptr(&'static self) -> *const bindings::of_device_id;
+}
+
+/// An Open Firmware Match Table that can be constructed at build time.
 ///
 /// # Invariants
 ///
-/// The final array element is always filled with zeros (the default).
-pub struct OfMatchTable(InnerTable);
+/// `sentinel` always contains zeroes.
+#[repr(C)]
+pub struct ConstOfMatchTable<const N: usize> {
+    table: [bindings::of_device_id; N],
+    sentinel: bindings::of_device_id,
+}
 
-impl OfMatchTable {
-    /// Creates a [`OfMatchTable`] from a single `compatible` string.
-    pub fn new(compatible: &'static CStr) -> Result<Self> {
-        let tbl = Box::try_new([
-            Self::new_of_device_id(compatible)?,
-            bindings::of_device_id::default(),
-        ])?;
-        // INVARIANTS: we allocated an array with `default()` as its final
-        // element, therefore that final element will be filled with zeros,
-        // and the invariant above will hold.
-        Ok(Self(tbl))
+impl<const N: usize> ConstOfMatchTable<N> {
+    /// Creates a new Open Firmware Match Table from a list of compatible strings.
+    pub const fn new_const(compatibles: [&'static CStr; N]) -> Self {
+        let mut table = [Self::zeroed_of_device_id(); N];
+        let mut i = 0;
+        while i < N {
+            table[i] = Self::new_of_device_id(compatibles[i]);
+            i += 1;
+        }
+        Self {
+            table,
+            // INVARIANT: we zero the sentinel here, and never change it
+            // anwhere. Therefore it always contains zeroes.
+            sentinel: Self::zeroed_of_device_id(),
+        }
     }
 
-    fn new_of_device_id(compatible: &'static CStr) -> Result<bindings::of_device_id> {
-        let mut buf = [0_u8; 128];
-        if compatible.len() > buf.len() {
-            return Err(Error::EINVAL);
+    const fn zeroed_of_device_id() -> bindings::of_device_id {
+        bindings::of_device_id {
+            name: [0; 32usize],
+            type_: [0; 32usize],
+            compatible: [0; 128usize],
+            data: ptr::null(),
         }
-        buf.get_mut(..compatible.len())
-            .ok_or(Error::EINVAL)?
-            .copy_from_slice(compatible.as_bytes());
-        Ok(bindings::of_device_id {
-            // SAFETY: re-interpretation from [u8] to [c_types::c_char] of same length is always safe.
-            compatible: unsafe { transmute::<[u8; 128], [c_types::c_char; 128]>(buf) },
-            ..Default::default()
-        })
+    }
+
+    const fn new_of_device_id(compatible: &'static CStr) -> bindings::of_device_id {
+        let mut id = Self::zeroed_of_device_id();
+        let compatible = compatible.as_bytes_with_nul();
+        let mut i = 0;
+        while i < compatible.len() {
+            // if `compatible` does not fit in `id.compatible`, an
+            // "index out of bounds" build time exception will be triggered.
+            id.compatible[i] = compatible[i] as c_types::c_char;
+            i += 1;
+        }
+        id
     }
 }
 
-impl PointerWrapper for OfMatchTable {
-    fn into_pointer(self) -> *const c_types::c_void {
-        // Per the invariant above, the generated pointer points to an
-        // array of `bindings::of_device_id`, where the final element is
-        // filled with zeros (the sentinel). Therefore, it's suitable to
-        // be assigned to `bindings::device_driver::of_match_table`.
-        self.0.into_pointer()
-    }
-
-    unsafe fn from_pointer(p: *const c_types::c_void) -> Self {
-        // SAFETY: The passed pointer comes from a previous call to [`InnerTable::into_pointer()`].
-        Self(unsafe { InnerTable::from_pointer(p) })
+impl<const N: usize> OfMatchTable for ConstOfMatchTable<N> {
+    fn as_ptr(&'static self) -> *const bindings::of_device_id {
+        // The array is sentinel-terminated, by the invariant above.
+        // The returned pointer is created by dereferencing
+        // a structure with static lifetime, therefore the pointer itself
+        // has static lifetime.
+        &self.table[0]
     }
 }
