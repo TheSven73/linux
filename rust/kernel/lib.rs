@@ -16,7 +16,9 @@
     allocator_api,
     alloc_error_handler,
     associated_type_defaults,
+    const_evaluatable_checked,
     const_fn_trait_bound,
+    const_generics,
     const_mut_refs,
     const_panic,
     const_raw_ptr_deref,
@@ -28,6 +30,7 @@
 #![deny(clippy::perf)]
 #![deny(clippy::style)]
 #![deny(rust_2018_idioms)]
+#![allow(incomplete_features)]
 
 // Ensure conditional compilation based on the kernel configuration works;
 // otherwise we may silently break things like initcall handling.
