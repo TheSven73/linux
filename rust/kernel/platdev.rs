@@ -20,7 +20,6 @@ use core::{marker::PhantomPinned, pin::Pin};
 /// A registration of a platform device.
 #[derive(Default)]
 pub struct Registration {
-    registered: bool,
     of_table: Option<*const c_types::c_void>,
     pdrv: bindings::platform_driver,
     _pin: PhantomPinned,
@@ -80,18 +79,15 @@ extern "C" fn remove_callback<P: PlatformDriver>(
 }
 
 impl Registration {
-    fn register<P: PlatformDriver>(
-        self: Pin<&mut Self>,
+    /// Registers a platform device.
+    ///
+    /// Returns a pinned heap-allocated representation of the registration.
+    pub fn new_pinned<P: PlatformDriver>(
         name: &'static CStr,
         of_match_table: Option<OfMatchTable>,
         module: &'static crate::ThisModule,
-    ) -> Result {
-        // SAFETY: We must ensure that we never move out of `this`.
-        let this = unsafe { self.get_unchecked_mut() };
-        if this.registered {
-            // Already registered.
-            return Err(Error::EINVAL);
-        }
+    ) -> Result<Pin<Box<Self>>> {
+        let mut this = Box::try_new(Self::default())?;
         this.pdrv.driver.name = name.as_char_ptr();
         if let Some(tbl) = of_match_table {
             let ptr = tbl.into_pointer();
@@ -113,32 +109,14 @@ impl Registration {
         if ret < 0 {
             return Err(Error::from_kernel_errno(ret));
         }
-        this.registered = true;
-        Ok(())
-    }
-
-    /// Registers a platform device.
-    ///
-    /// Returns a pinned heap-allocated representation of the registration.
-    pub fn new_pinned<P: PlatformDriver>(
-        name: &'static CStr,
-        of_match_tbl: Option<OfMatchTable>,
-        module: &'static crate::ThisModule,
-    ) -> Result<Pin<Box<Self>>> {
-        let mut r = Pin::from(Box::try_new(Self::default())?);
-        r.as_mut().register::<P>(name, of_match_tbl, module)?;
-        Ok(r)
+        Ok(Pin::from(this))
     }
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        if self.registered {
-            // SAFETY: if `registered` is true, then `self.pdev` was registered
-            // previously, which means `platform_driver_unregister` is always
-            // safe to call.
-            unsafe { bindings::platform_driver_unregister(&mut self.pdrv) }
-        }
+        // SAFETY: `self.pdev` was registered previously.
+        unsafe { bindings::platform_driver_unregister(&mut self.pdrv) }
         if let Some(ptr) = self.of_table {
             // SAFETY: `ptr` came from an `OfMatchTable`.
             let tbl = unsafe { OfMatchTable::from_pointer(ptr) };
