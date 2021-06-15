@@ -15,14 +15,15 @@ use crate::{
     types::PointerWrapper,
 };
 use alloc::boxed::Box;
-use core::{marker::PhantomPinned, pin::Pin};
 
 /// A registration of a platform device.
-#[derive(Default)]
+///
+/// # Invariants
+///
+/// We never move out of `pdrv`'s `Box`.
 pub struct Registration {
     of_table: Option<*const c_types::c_void>,
-    pdrv: bindings::platform_driver,
-    _pin: PhantomPinned,
+    pdrv: Box<bindings::platform_driver>,
 }
 
 // SAFETY: `Registration` does not expose any of its state across threads
@@ -81,23 +82,26 @@ extern "C" fn remove_callback<P: PlatformDriver>(
 impl Registration {
     /// Registers a platform device.
     ///
-    /// Returns a pinned heap-allocated representation of the registration.
-    pub fn new_pinned<P: PlatformDriver>(
+    /// Returns a representation of the registration.
+    pub fn new<P: PlatformDriver>(
         name: &'static CStr,
         of_match_table: Option<OfMatchTable>,
         module: &'static crate::ThisModule,
-    ) -> Result<Pin<Box<Self>>> {
-        let mut this = Box::try_new(Self::default())?;
-        this.pdrv.driver.name = name.as_char_ptr();
-        if let Some(tbl) = of_match_table {
+    ) -> Result<Self> {
+        let mut pdrv = Box::try_new(bindings::platform_driver::default())?;
+        pdrv.driver.name = name.as_char_ptr();
+        let of_table = if let Some(tbl) = of_match_table {
             let ptr = tbl.into_pointer();
-            this.of_table = Some(ptr);
-            this.pdrv.driver.of_match_table = ptr.cast();
-        }
-        this.pdrv.probe = Some(probe_callback::<P>);
-        this.pdrv.remove = Some(remove_callback::<P>);
+            pdrv.driver.of_match_table = ptr.cast();
+            Some(ptr)
+        } else {
+            None
+        };
+        pdrv.probe = Some(probe_callback::<P>);
+        pdrv.remove = Some(remove_callback::<P>);
         // SAFETY:
-        //   - `this.pdrv` lives at least until the call to `platform_driver_unregister()` returns.
+        //   - `pdrv` will never move out of its `Box`, and lives at least
+        //      until the call to `platform_driver_unregister()` returns.
         //   - `name` pointer has static lifetime.
         //   - `module.0` lives at least as long as the module.
         //   - `probe()` and `remove()` are static functions.
@@ -105,18 +109,18 @@ impl Registration {
         //      - a raw pointer which lives until after the call to
         //       `bindings::platform_driver_unregister()`, or
         //      - null.
-        let ret = unsafe { bindings::__platform_driver_register(&mut this.pdrv, module.0) };
+        let ret = unsafe { bindings::__platform_driver_register(&mut *pdrv, module.0) };
         if ret < 0 {
             return Err(Error::from_kernel_errno(ret));
         }
-        Ok(Pin::from(this))
+        Ok(Self { of_table, pdrv })
     }
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
         // SAFETY: `self.pdev` was registered previously.
-        unsafe { bindings::platform_driver_unregister(&mut self.pdrv) }
+        unsafe { bindings::platform_driver_unregister(&mut *self.pdrv) }
         if let Some(ptr) = self.of_table {
             // SAFETY: `ptr` came from an `OfMatchTable`.
             let tbl = unsafe { OfMatchTable::from_pointer(ptr) };

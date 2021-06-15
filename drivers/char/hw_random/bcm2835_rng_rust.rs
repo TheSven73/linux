@@ -67,14 +67,14 @@ impl PlatformDriver for RngDriver {
 }
 
 struct RngModule {
-    _pdev: Pin<Box<platdev::Registration>>,
+    _pdev: platdev::Registration,
 }
 
 impl KernelModule for RngModule {
     fn init() -> Result<Self> {
         let of_match_tbl = OfMatchTable::new(&c_str!("brcm,bcm2835-rng"))?;
 
-        let pdev = platdev::Registration::new_pinned::<RngDriver>(
+        let pdev = platdev::Registration::new::<RngDriver>(
             c_str!("bcm2835-rng-rust"),
             Some(of_match_tbl),
             &THIS_MODULE,
