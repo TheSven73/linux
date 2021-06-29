@@ -67,7 +67,7 @@ impl PlatformDriver for RngDriver {
 }
 
 struct RngModule {
-    _pdev: Pin<Box<platdev::Registration>>,
+    _pdev: platdev::Registration,
 }
 
 impl KernelModule for RngModule {
@@ -75,7 +75,7 @@ impl KernelModule for RngModule {
         const OF_MATCH_TBL: ConstOfMatchTable<1> =
             ConstOfMatchTable::new_const([&c_str!("brcm,bcm2835-rng")]);
 
-        let pdev = platdev::Registration::new_pinned::<RngDriver>(
+        let pdev = platdev::Registration::new::<RngDriver>(
             c_str!("bcm2835-rng-rust"),
             Some(&OF_MATCH_TBL),
             &THIS_MODULE,
