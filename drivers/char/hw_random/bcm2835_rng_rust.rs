@@ -13,6 +13,7 @@ use kernel::{
     of::ConstOfMatchTable,
     platdev::PlatformDriver,
     prelude::*,
+    sync::Ref,
     {c_str, platdev},
 };
 
@@ -24,24 +25,39 @@ module! {
     license: b"GPL v2",
 }
 
-struct RngDevice;
+struct RngDevice {
+    zero: u32,
+}
 
-impl FileOpener<()> for RngDevice {
-    fn open(_state: &()) -> Result<Self::Wrapper> {
-        Ok(Box::try_new(RngDevice)?)
+impl RngDevice {
+    fn new() -> Self {
+        Self { zero: 0 }
+    }
+}
+
+impl FileOpener<Ref<Self>> for RngDevice {
+    fn open(state: &Ref<Self>) -> Result<Self::Wrapper> {
+        Ok(state.clone())
     }
 }
 
 impl FileOperations for RngDevice {
+    type Wrapper = Ref<Self>;
+
     kernel::declare_file_operations!(read);
 
-    fn read<T: IoBufferWriter>(_: &Self, _: &File, data: &mut T, offset: u64) -> Result<usize> {
+    fn read<T: IoBufferWriter>(
+        this: &Ref<Self>,
+        _: &File,
+        data: &mut T,
+        offset: u64,
+    ) -> Result<usize> {
         // Succeed if the caller doesn't provide a buffer or if not at the start.
         if data.is_empty() || offset != 0 {
             return Ok(0);
         }
 
-        data.write(&0_u32)?;
+        data.write(&this.zero)?;
         Ok(4)
     }
 }
@@ -49,18 +65,27 @@ impl FileOperations for RngDevice {
 struct RngDriver;
 
 impl PlatformDriver for RngDriver {
-    type DrvData = Pin<Box<miscdev::Registration<()>>>;
+    type DrvData = Pin<Box<miscdev::Registration<Ref<RngDevice>>>>;
 
     fn probe(device_id: i32) -> Result<Self::DrvData> {
         pr_info!("probing discovered hwrng with id {}\n", device_id);
+        let device = Ref::try_new(RngDevice::new())?;
         let drv_data =
-            miscdev::Registration::new_pinned::<RngDevice>(c_str!("rust_hwrng"), None, ())?;
+            miscdev::Registration::new_pinned::<RngDevice>(c_str!("rust_hwrng"), None, device)?;
         Ok(drv_data)
     }
 
     fn remove(device_id: i32, _drv_data: Self::DrvData) -> Result {
         pr_info!("removing hwrng with id {}\n", device_id);
         Ok(())
+    }
+
+    fn shutdown(device_id: i32, drv_data: &miscdev::Registration<Ref<RngDevice>>) {
+        pr_info!(
+            "shutting down hwrng with id {}, zero {}\n",
+            device_id,
+            drv_data.context.zero
+        );
     }
 }
 
