@@ -15,7 +15,7 @@ use crate::{
     types::PointerWrapper,
 };
 use alloc::boxed::Box;
-use core::{marker::PhantomPinned, pin::Pin};
+use core::{marker::PhantomPinned, ops::Deref, pin::Pin};
 
 /// A registration of a platform device.
 #[derive(Default)]
@@ -70,12 +70,31 @@ extern "C" fn remove_callback<P: PlatformDriver>(
         //   - we allocated this pointer using `P::DrvData::into_pointer`,
         //     so it is safe to turn back into a `P::DrvData`.
         //   - the allocation happened in `probe`, no-one freed the memory,
-        //     `remove` is the canonical kernel location to free driver data. so OK
-        //     to convert the pointer back to a Rust structure here.
+        //     `remove` is the canonical kernel location to free driver data,
+        //     no borrows are outstanding as the driver model guarantees that
+        //     `remove` is called only while no other `bindings::platform_driver`
+        //     callbacks are in progress,
+        //     so OK to convert the pointer back to a Rust structure here.
         let drv_data = unsafe { P::DrvData::from_pointer(ptr) };
         P::remove(device_id, drv_data)?;
         Ok(0)
     }
+}
+
+extern "C" fn shutdown_callback<P: PlatformDriver>(pdev: *mut bindings::platform_device) {
+    // SAFETY: `pdev` is guaranteed to be a valid, non-null pointer.
+    let device_id = unsafe { (*pdev).id };
+    // SAFETY: `pdev` is guaranteed to be a valid, non-null pointer.
+    let ptr = unsafe { rust_helper_platform_get_drvdata(pdev) };
+    // SAFETY:
+    //   - `ptr` was returned by a previous call to `P::DrvData::into_pointer`;
+    //   - the structure which `ptr` points at, is guaranteed to exist: it's
+    //     deallocated in `remove`, which is guaranteed by the driver model to
+    //     execute after all other `bindings::platform_driver` callbacks have
+    //     returned;
+    // so `ptr` is safe to borrow here.
+    let drv_data = unsafe { P::DrvData::borrow(ptr) };
+    P::shutdown(device_id, &drv_data);
 }
 
 impl Registration {
@@ -97,6 +116,7 @@ impl Registration {
         }
         this.pdrv.probe = Some(probe_callback::<P>);
         this.pdrv.remove = Some(remove_callback::<P>);
+        this.pdrv.shutdown = Some(shutdown_callback::<P>);
         // SAFETY:
         //   - `this.pdrv` lives at least until the call to `platform_driver_unregister()` returns.
         //   - `name` pointer has static lifetime.
@@ -163,4 +183,13 @@ pub trait PlatformDriver {
     /// Called when a platform device is removed.
     /// Implementers should prepare the device for complete removal here.
     fn remove(device_id: i32, drv_data: Self::DrvData) -> Result;
+
+    /// Platform driver shutdown.
+    ///
+    /// Called at shut-down time to quiesce the device.
+    fn shutdown(
+        _device_id: i32,
+        _drv_data: &<<Self::DrvData as PointerWrapper>::Borrowed as Deref>::Target,
+    ) {
+    }
 }
